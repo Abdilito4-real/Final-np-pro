@@ -49,8 +49,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 closeCarDetails();
             }
         });
+        
+        // Initialize lightbox
+        setupLightbox();
     }
 });
+
+// Utility: Debounce function to limit rate of execution
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+    };
+}
 
 // Set up cars event listeners
 function setupCarsEventListeners() {
@@ -58,7 +71,7 @@ function setupCarsEventListeners() {
     // filterToggle is handled in main.js
     
     if (searchInput) {
-        searchInput.addEventListener('input', filterCars);
+        searchInput.addEventListener('input', debounce(filterCars, 300));
     }
     
     if (brandFilter) {
@@ -70,19 +83,19 @@ function setupCarsEventListeners() {
     }
     
     if (priceMin) {
-        priceMin.addEventListener('input', filterCars);
+        priceMin.addEventListener('input', debounce(filterCars, 300));
     }
     
     if (priceMax) {
-        priceMax.addEventListener('input', filterCars);
+        priceMax.addEventListener('input', debounce(filterCars, 300));
     }
     
     if (yearMin) {
-        yearMin.addEventListener('input', filterCars);
+        yearMin.addEventListener('input', debounce(filterCars, 300));
     }
     
     if (yearMax) {
-        yearMax.addEventListener('input', filterCars);
+        yearMax.addEventListener('input', debounce(filterCars, 300));
     }
     
     if (fuelType) {
@@ -93,9 +106,10 @@ function setupCarsEventListeners() {
         transmission.addEventListener('change', filterCars);
     }
     
-    // resetFilters is handled in main.js
+    if (resetFilters) {
+        resetFilters.addEventListener('click', resetAllFilters);
+    }
     
-    // View toggle
     // View toggles are handled in main.js
     
     // Modal close
@@ -435,7 +449,7 @@ async function openCarDetails(carId, trackView = true) {
     } else {
         galleryHtml = `
             <div class="car-gallery">
-                <img src="https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80" alt="${car.make} ${car.model}" class="main-image">
+                <img src="https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=2070&q=80" alt="${car.make} ${car.model}" class="main-image" id="mainCarImage">
             </div>
         `;
     }
@@ -528,6 +542,15 @@ async function openCarDetails(carId, trackView = true) {
                 document.querySelectorAll('.thumbnail').forEach(t => t.style.opacity = '0.6');
                 this.style.opacity = '1';
             });
+        });
+    }
+    
+    // Add Lightbox listener for main image
+    const mainImage = document.getElementById('mainCarImage');
+    if (mainImage) {
+        mainImage.style.cursor = 'zoom-in';
+        mainImage.addEventListener('click', function() {
+            openLightbox(this.src, this.alt);
         });
     }
     
@@ -668,4 +691,55 @@ function showError(message) {
         `;
     }
     showToast(message, 'error');
+}
+
+// Lightbox functionality
+function setupLightbox() {
+    if (document.getElementById('lightboxModal')) return;
+
+    const lightboxHtml = `
+        <div id="lightboxModal" style="display: none; position: fixed; z-index: 2000; padding-top: 50px; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9);">
+            <span id="lightboxClose" style="position: absolute; top: 15px; right: 35px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer;">&times;</span>
+            <img class="lightbox-content" id="lightboxImage" style="margin: auto; display: block; width: 80%; max-width: 900px; max-height: 80vh; object-fit: contain;">
+            <div id="lightboxCaption" style="margin: auto; display: block; width: 80%; max-width: 700px; text-align: center; color: #ccc; padding: 10px 0; height: 150px;"></div>
+        </div>
+    `;
+    
+    document.body.insertAdjacentHTML('beforeend', lightboxHtml);
+    
+    const modal = document.getElementById('lightboxModal');
+    const closeBtn = document.getElementById('lightboxClose');
+    
+    if (closeBtn) {
+        closeBtn.onclick = function() {
+            modal.style.display = "none";
+        }
+    }
+    
+    if (modal) {
+        modal.onclick = function(e) {
+            if (e.target === modal) {
+                modal.style.display = "none";
+            }
+        }
+    }
+    
+    // Close on Escape
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && modal.style.display === 'block') {
+            modal.style.display = "none";
+        }
+    });
+}
+
+function openLightbox(src, caption) {
+    const modal = document.getElementById('lightboxModal');
+    const modalImg = document.getElementById('lightboxImage');
+    const captionText = document.getElementById('lightboxCaption');
+    
+    if (modal && modalImg) {
+        modal.style.display = "block";
+        modalImg.src = src;
+        if (captionText) captionText.innerHTML = caption || '';
+    }
 }
