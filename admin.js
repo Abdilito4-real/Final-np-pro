@@ -884,6 +884,18 @@ function closeMobileMenu() {
 window.closeMobileMenu = closeMobileMenu;
 
 /**
+ * Utility: Debounce function to limit rate of execution
+ */
+function debounce(func, wait) {
+    let timeout;
+    return function(...args) {
+        const context = this;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func.apply(context, args), wait);
+    };
+}
+
+/**
  * Setup admin event listeners
  */
 function setupAdminEventListeners() {
@@ -981,14 +993,14 @@ function setupAdminEventListeners() {
 
     // Search functionality
     if (carSearch) {
-        carSearch.addEventListener('input', function() {
+        carSearch.addEventListener('input', debounce(function() {
             const searchTerm = this.value.toLowerCase();
             const rows = adminCarsTable.querySelectorAll('tbody tr');
             rows.forEach(row => {
                 const text = row.textContent.toLowerCase();
                 row.style.display = text.includes(searchTerm) ? '' : 'none';
             });
-        });
+        }, 300));
     }
 
     // Select all checkbox
@@ -1110,13 +1122,28 @@ function subscribeToMessages() {
 async function fetchDashboardStats() {
     console.log("Fetching dashboard stats from database...");
     try {
-        // 1. Fetch car counts and inventory value
-        const { data: carStats, error: carStatsError } = await supabase
-            .from('cars')
-            .select('status, price, created_at', { count: 'exact' });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0); // Start of today
+        const isoToday = today.toISOString();
+
+        // Execute independent queries in parallel for speed
+        const [carStatsResult, analyticsStatsResult, messagesResult] = await Promise.all([
+            // 1. Fetch car counts and inventory value
+            supabase.from('cars').select('status, price, created_at', { count: 'exact' }),
+            // 2. Fetch analytics counts for today
+            supabase.from('analytics').select('event_type').gte('created_at', isoToday),
+            // 3. Fetch unread messages count
+            supabase.from('messages').select('*', { count: 'exact', head: true }).eq('is_read', false)
+        ]);
+
+        const { data: carStats, error: carStatsError } = carStatsResult;
+        const { data: analyticsStats, error: analyticsError } = analyticsStatsResult;
+        const { count: unreadCount, error: messagesError } = messagesResult;
 
         if (carStatsError) throw carStatsError;
+        if (analyticsError) throw analyticsError;
 
+        // Process Car Stats
         const totalCarCount = carStats.length;
         const availableCarCount = carStats.filter(c => c.status === 'available').length;
         const soldCarCount = carStats.filter(c => c.status === 'sold').length;
@@ -1133,18 +1160,7 @@ async function fetchDashboardStats() {
             avgAge = totalAgeInDays / availableCarsForAge.length;
         }
 
-        // 2. Fetch analytics counts for today
-        const today = new Date();
-        today.setHours(0, 0, 0, 0); // Start of today
-        const isoToday = today.toISOString();
-
-        const { data: analyticsStats, error: analyticsError } = await supabase
-            .from('analytics')
-            .select('event_type')
-            .gte('created_at', isoToday);
-
-        if (analyticsError) throw analyticsError;
-
+        // Process Analytics Stats
         const totalDetailsClicks = analyticsStats.filter(e => e.event_type === 'view').length;
         const totalBuyClicks = analyticsStats.filter(e => e.event_type === 'contact_click').length;
 
@@ -1157,12 +1173,6 @@ async function fetchDashboardStats() {
 
         // 4. Update clicks and fetch unread messages
         if (detailsClicks) detailsClicks.textContent = totalDetailsClicks;
-
-        // Fetch unread messages count
-        const { count: unreadCount, error: messagesError } = await supabase
-            .from('messages')
-            .select('*', { count: 'exact', head: true })
-            .eq('is_read', false);
 
         if (!messagesError) {
             if (unreadMessagesCount) unreadMessagesCount.textContent = unreadCount;
@@ -1263,13 +1273,22 @@ async function loadAdminCars() {
     carAnalytics = {}; // Reset in-memory analytics
 
     try {
-        // 1. Fetch all cars
-        const { data: carsData, error: carsError } = await supabase
-            .from('cars')
-            .select('*, details_clicks, buy_clicks') // Explicitly select the click columns
-            .order('created_at', { ascending: false });
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const isoToday = today.toISOString();
+
+        // Fetch cars and today's analytics in parallel
+        const [carsResult, analyticsResult] = await Promise.all([
+            supabase.from('cars').select('*, details_clicks, buy_clicks').order('created_at', { ascending: false }),
+            supabase.from('analytics').select('car_id, event_type').gte('created_at', isoToday)
+        ]);
+
+        const { data: carsData, error: carsError } = carsResult;
+        const { data: analyticsData, error: analyticsError } = analyticsResult;
 
         if (carsError) throw carsError;
+        if (analyticsError) throw analyticsError;
+
         adminCars = carsData || [];
 
         // 2. Initialize analytics object for all cars to ensure they appear in the table
@@ -1285,23 +1304,6 @@ async function loadAdminCars() {
             }
         });
 
-        renderAdminCarsTable(adminCars);
-
-        // Hide the inline loader once cars are loaded
-        if (adminLoading) adminLoading.style.display = 'none';
-
-        // 3. Fetch today's analytics from the database
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const isoToday = today.toISOString();
-
-        const { data: analyticsData, error: analyticsError } = await supabase
-            .from('analytics')
-            .select('car_id, event_type')
-            .gte('created_at', isoToday);
-
-        if (analyticsError) throw analyticsError;
-
         // 4. Process analytics data and populate the carAnalytics object
         analyticsData.forEach(event => {
             const { car_id, event_type } = event;
@@ -1316,6 +1318,10 @@ async function loadAdminCars() {
 
         // 5. Finalize Dashboard Setup in Correct Order
         renderAdminCarsTable(adminCars); // Render table with all data
+        
+        // Hide the inline loader once cars are loaded
+        if (adminLoading) adminLoading.style.display = 'none';
+        
         fetchDashboardStats();           // Fetch and update main stat cards
         renderClicksChart();             // Render the analytics chart
 
@@ -1604,7 +1610,7 @@ function renderUploadedImages() {
         
         imageDiv.innerHTML = `
             <img src="${image}" alt="Car image ${index + 1}">
-            <button class="remove-image" data-index="${index}">&times;</button>
+            <button type="button" class="remove-image" data-index="${index}">&times;</button>
         `;
         
         uploadedImagesContainer.appendChild(imageDiv);
